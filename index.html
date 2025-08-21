@@ -205,9 +205,10 @@
       width: min(920px, 92vw);
       border-radius: 10px;
       box-shadow: var(--shadow);
-      max-height: 80vh;       /* NEW */
-      overflow-y: auto;       /* NEW */
+      max-height: 80vh;       /* ADDED */
+      overflow-y: auto;       /* ADDED */
     }
+
     .close {
       float: right;
       font-size: 1.6rem;
@@ -286,8 +287,9 @@
       <canvas id="weeklyChart" height="160"></canvas>
       <h3 style="margin-top:20px;">Monthly (per week, last 8 weeks)</h3>
       <canvas id="monthlyChart" height="160"></canvas>
-      <h3 style="margin-top:20px;">Per Session Breakdown</h3>
+      <h3 style="margin-top:20px;">Per-Session Breakdown (Correct vs Wrong vs Skipped)</h3>
       <canvas id="sessionBreakdownChart" height="160"></canvas>
+
     </div>
   </div>
 
@@ -295,12 +297,12 @@
     /* ========= Firebase Configuration & Initialization ========= */
     const firebaseConfig = {
       apiKey: "AIzaSyAnvFB9d9zVMcwFTfGLKeVZ2sRdIvW1mDM",
-    authDomain: "study2-72458.firebaseapp.com",
-    projectId: "study2-72458",
-    storageBucket: "study2-72458.firebasestorage.app",
-    messagingSenderId: "24601894704",
-    appId: "1:24601894704:web:2787977ef99689dcaff2f5",
-    measurementId: "G-RVVQKPXY6S"
+  authDomain: "study2-72458.firebaseapp.com",
+  projectId: "study2-72458",
+  storageBucket: "study2-72458.firebasestorage.app",
+  messagingSenderId: "24601894704",
+  appId: "1:24601894704:web:2787977ef99689dcaff2f5",
+  measurementId: "G-RVVQKPXY6S"
     };
 
     // Initialize Firebase
@@ -403,7 +405,7 @@
 
     let weeklyChart = null;
     let monthlyChart = null;
-    let sessionBreakdownChart = null; // NEW
+    let perSessionChart = null;
 
     /* ========= Utilities ========= */
     function formatTime(ms) {
@@ -506,305 +508,538 @@
           .where("profileName", "==", name)
           .orderBy("start", "desc")
           .onSnapshot(snapshot => {
-            const list = [];
-            snapshot.forEach(doc => {
-              list.push({ id: doc.id, ...doc.data() });
-            });
-            sessions[name] = list;
+            sessions[name] = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
             renderSessions();
-            renderStats();
+            renderStatsPanel();
+            if (graphModal.style.display === "block") renderGraphs();
           }, err => {
             console.error("Error listening to sessions:", err);
           });
       } catch (err) {
-        console.error("Error selecting profile:", err);
+        console.error("Error setting up session listener:", err);
       }
+
+      // Update UI state
+      setStudyControlsEnabled(!!currentSession);
     }
 
-    /* ========= Sessions ========= */
-    async function startSession() {
-      const exName = exNameInput.value.trim();
-      if (!exName || !currentProfile) return;
+    /* ========= Event Handlers ========= */
+    createProfileBtn.onclick = async () => {
+      const name = newProfileInput.value.trim();
+      if (!name) return alert("Enter a profile name");
+      if (profiles.includes(name)) {
+        alert("Profile already exists");
+        return;
+      }
+      
+      if (!db) return alert("Database not connected");
+      
+      try {
+        await db.collection("profiles").doc(name).set({ name });
+        profiles.push(name);
+        newProfileInput.value = "";
+        renderProfiles();
+        selectProfile(name);
+      } catch (err) {
+        console.error("Error creating profile:", err);
+        alert("Could not create profile. Check console for details.");
+      }
+    };
+
+    profileSelect.onchange = () => {
+      if (profileSelect.value) {
+        selectProfile(profileSelect.value);
+      }
+    };
+
+    /* ========= Session Lifecycle ========= */
+    exNameInput.addEventListener("input", () => {
+      setStudyControlsEnabled(!!currentSession);
+    });
+
+    function startTimer() {
+      clearInterval(timerInterval);
+      timerInterval = setInterval(() => {
+        if (!paused) {
+          elapsedMs += 1000;
+          timerDisplay.textContent = formatTime(elapsedMs);
+        }
+      }, 1000);
+    }
+
+    startBtn.onclick = () => {
+      if (!currentProfile) return alert("Select a profile first");
+      if (currentSession) return alert("A session is already running");
+      const name = exNameInput.value.trim();
+      if (!name) return alert("Enter a session name");
 
       currentSession = {
-        profileName: currentProfile,
-        exName,
+        name,
         start: Date.now(),
-        end: null,
-        duration: 0,
+        durationMs: 0,
+        boxes: [],
         correct: 0,
         wrong: 0,
-        skipped: 0,
-        events: []
+        skipped: 0
       };
-
       elapsedMs = 0;
       paused = false;
-      timerInterval = setInterval(updateTimer, 1000);
-      updateTimer();
-
+      questionGrid.innerHTML = "";
+      timerDisplay.textContent = "00:00:00";
+      startTimer();
       setStudyControlsEnabled(true);
-      renderQuestionGrid();
-    }
+    };
 
-    function pauseResumeSession() {
+    pauseBtn.onclick = () => {
       if (!currentSession) return;
+      paused = !paused;
+      pauseBtn.textContent = paused ? "Resume" : "Pause";
+    };
 
-      if (!paused) {
-        clearInterval(timerInterval);
-        paused = true;
-        pauseBtn.textContent = "Resume";
-      } else {
-        timerInterval = setInterval(updateTimer, 1000);
-        paused = false;
-        pauseBtn.textContent = "Pause";
-      }
-    }
-
-    async function endSession() {
+    endBtn.onclick = async () => {
       if (!currentSession) return;
-
+      if (!db) return alert("Database not connected");
+      
       clearInterval(timerInterval);
+      currentSession.durationMs = elapsedMs;
       currentSession.end = Date.now();
-      currentSession.duration = elapsedMs;
+      currentSession.total = currentSession.correct + currentSession.wrong + currentSession.skipped;
+      currentSession.profileName = currentProfile;
 
       try {
         await db.collection("sessions").add(currentSession);
-        console.log("Session saved:", currentSession);
+        console.log("Session saved successfully");
       } catch (err) {
         console.error("Error saving session:", err);
+        alert("Could not save session to Firestore. Check console for details.");
       }
 
+      // Reset UI
       currentSession = null;
+      elapsedMs = 0;
+      timerDisplay.textContent = "00:00:00";
+      pauseBtn.textContent = "Pause";
       setStudyControlsEnabled(false);
-      renderQuestionGrid();
+    };
+
+    function addBox(type) {
+      if (!currentSession) return alert("Start a session first");
+      const n = currentSession.boxes.length + 1;
+      const div = document.createElement("div");
+      div.className = `square ${type}`;
+      div.textContent = n;
+      questionGrid.appendChild(div);
+
+      currentSession.boxes.push(type);
+      currentSession[type] += 1;
     }
 
-    function updateTimer() {
-      elapsedMs += 1000;
-      timerDisplay.textContent = formatTime(elapsedMs);
-    }
+    correctBtn.onclick = () => addBox("correct");
+    wrongBtn.onclick   = () => addBox("wrong");
+    skippedBtn.onclick = () => addBox("skipped");
 
-    function addQuestionResult(type) {
-      if (!currentSession) return;
-
-      if (type === "correct") currentSession.correct++;
-      else if (type === "wrong") currentSession.wrong++;
-      else if (type === "skipped") currentSession.skipped++;
-
-      currentSession.events.push({ type, time: Date.now() });
-      renderQuestionGrid();
-    }
-
-    function renderQuestionGrid() {
-      questionGrid.innerHTML = "";
-      if (!currentSession) return;
-      const total = currentSession.correct + currentSession.wrong + currentSession.skipped;
-      for (let i = 0; i < total; i++) {
-        const e = currentSession.events[i];
-        const div = document.createElement("div");
-        div.className = "square " + e.type;
-        div.textContent = i + 1;
-        questionGrid.appendChild(div);
+    /* ========= History ========= */
+    async function deleteSession(sessionId) {
+      if (!confirm("Are you sure you want to delete this session?")) return;
+      if (!db) return alert("Database not connected");
+      
+      try {
+        await db.collection("sessions").doc(sessionId).delete();
+        console.log("Session deleted successfully");
+      } catch (err) {
+        console.error("Error deleting session:", err);
+        alert("Could not delete session from Firestore. Check console for details.");
       }
     }
+    window.deleteSession = deleteSession;
 
-    /* ========= Render Sessions ========= */
     function renderSessions() {
       sessionsList.innerHTML = "";
-      const list = sessions[currentProfile] || [];
-      list.forEach(s => {
-        const li = document.createElement("li");
-        const date = new Date(s.start).toLocaleString();
-        const dur = formatTime(s.duration);
-        const totalQs = s.correct + s.wrong + s.skipped;
+      if (!currentProfile || !sessions[currentProfile] || !sessions[currentProfile].length) {
+        const empty = document.createElement("li");
+        empty.className = "muted";
+        empty.textContent = "No sessions yet.";
+        sessionsList.appendChild(empty);
+        return;
+      }
 
-        li.innerHTML = `
-          <div class="session-head">
-            <span>${s.exName}</span>
-            <span class="session-meta">${date} • ${dur} • Qs ${totalQs}</span>
-          </div>
-          <div class="session-breakdown">
-            Correct ${s.correct} (${percent(s.correct,totalQs)}) | 
-            Wrong ${s.wrong} (${percent(s.wrong,totalQs)}) | 
-            Skipped ${s.skipped} (${percent(s.skipped,totalQs)})
-          </div>
+      sessions[currentProfile].forEach((s) => {
+        const li = document.createElement("li");
+        const total = s.correct + s.wrong + s.skipped;
+        const head = document.createElement("div");
+        head.className = "session-head";
+        head.innerHTML = `
+          <span>${s.name}</span>
+          <button class="danger" onclick="deleteSession('${s.id}')">Delete</button>
         `;
+
+        const meta = document.createElement("div");
+        meta.className = "session-meta";
+        const startStr = new Date(s.start).toLocaleString();
+        meta.textContent = `${startStr} • Duration: ${formatTime(s.durationMs)} • Questions: ${total}`;
+
+        const bd = document.createElement("div");
+        bd.className = "session-breakdown";
+        bd.innerHTML = `
+          ✔ ${s.correct} (${percent(s.correct, total)}) &nbsp;|&nbsp;
+          ❌ ${s.wrong} (${percent(s.wrong, total)}) &nbsp;|&nbsp;
+          ⏭ ${s.skipped} (${percent(s.skipped, total)})
+          <div class="small-legend">Legend: ✔ Correct • ❌ Wrong • ⏭ Skipped</div>
+        `;
+
+        li.appendChild(head);
+        li.appendChild(meta);
+        li.appendChild(bd);
         sessionsList.appendChild(li);
       });
     }
 
     /* ========= Stats ========= */
-    function renderStats() {
-      const list = sessions[currentProfile] || [];
-      if (!list.length) {
-        statsPanel.classList.add("hidden");
+    function renderStatsPanel() {
+      if (!currentProfile || !sessions[currentProfile]) {
+        statsContent.innerHTML = "";
         return;
       }
-      statsPanel.classList.remove("hidden");
+      const list = sessions[currentProfile] || [];
+      const totalSessions = list.length;
+      let totalQs = 0;
+      let totalDur = 0;
+      let sumCorrect = 0, sumWrong = 0, sumSkipped = 0;
 
-      let sumC=0, sumW=0, sumS=0, totalDur=0, totalQs=0;
-      list.forEach(s=>{
-        sumC+=s.correct; sumW+=s.wrong; sumS+=s.skipped;
-        totalDur+=s.duration; totalQs+=s.correct+s.wrong+s.skipped;
+      list.forEach(s => {
+        const t = s.correct + s.wrong + s.skipped;
+        totalQs += t;
+        totalDur += (s.durationMs || 0);
+        sumCorrect += s.correct;
+        sumWrong += s.wrong;
+        sumSkipped += s.skipped;
       });
 
+      const avgDur = totalSessions ? formatTime(Math.round(totalDur / totalSessions)) : "00:00:00";
+
       statsContent.innerHTML = `
-        <p>Sessions: ${list.length}</p>
-        <p>Total Questions: ${totalQs}</p>
-        <p>Avg Duration: ${formatTime(totalDur/list.length)}</p>
-        <p>Overall: Correct ${sumC} (${percent(sumC,totalQs)}) | Wrong ${sumW} (${percent(sumW,totalQs)}) | Skipped ${sumS} (${percent(sumS,totalQs)})</p>
+        <div><strong>Profile:</strong> ${currentProfile}</div>
+        <div><strong>Sessions:</strong> ${totalSessions}</div>
+        <div><strong>Total Questions:</strong> ${totalQs}</div>
+        <div><strong>Average Duration:</strong> ${avgDur}</div>
+        <div style="margin-top:6px;"><strong>Overall Breakdown:</strong>
+          ✔ ${sumCorrect} (${percent(sumCorrect, totalQs)}) &nbsp;|&nbsp;
+          ❌ ${sumWrong} (${percent(sumWrong, totalQs)}) &nbsp;|&nbsp;
+          ⏭ ${sumSkipped} (${percent(sumSkipped, totalQs)})
+        </div>
       `;
     }
 
-    /* ========= Graphs ========= */
-    function renderGraphs() {
-      const list = sessions[currentProfile] || [];
-      if (!list.length) return;
+    /* ========= Graphs (Chart.js) ========= */
+    function groupDailyLast7Days(list) {
+      const today = new Date();
+      today.setHours(0,0,0,0);
+      const dayMs = 86400000;
 
-      // Destroy old charts
+      const labels = [];
+      const map = {};
+      for (let i = 6; i >= 0; i--) {
+        const d = new Date(today.getTime() - i * dayMs);
+        const key = d.toDateString();
+        labels.push(d.toLocaleDateString());
+        map[key] = 0;
+      }
+
+      list.forEach(s => {
+        const d = new Date(s.start);
+        d.setHours(0,0,0,0);
+        const key = d.toDateString();
+        const total = (s.correct + s.wrong + s.skipped);
+        if (key in map) map[key] += total;
+      });
+
+      const values = Object.keys(map).sort((a,b)=>new Date(a)-new Date(b)).map(k => map[k]);
+      return { labels, values };
+    }
+
+    function groupWeeklyLast8Weeks(list) {
+      function isoWeek(d) {
+        const date = new Date(d.getTime());
+        date.setHours(0,0,0,0);
+        date.setDate(date.getDate() + 3 - ((date.getDay() + 6) % 7));
+        const week1 = new Date(date.getFullYear(), 0, 4);
+        return 1 + Math.round(((date - week1) / 86400000 - 3 + ((week1.getDay() + 6) % 7)) / 7);
+      }
+      function isoYear(d) {
+        const date = new Date(d.getTime());
+        date.setDate(date.getDate() + 3 - ((date.getDay() + 6) % 7));
+        return date.getFullYear();
+      }
+
+      const now = new Date();
+      const buckets = [];
+      for (let i = 7; i >= 0; i--) {
+        const ref = new Date(now.getTime() - i * 7 * 86400000);
+        buckets.push({ y: isoYear(ref), w: isoWeek(ref), label: `W${isoWeek(ref)} ${isoYear(ref)}`, total: 0 });
+      }
+
+      list.forEach(s => {
+        const d = new Date(s.start);
+        const y = isoYear(d);
+        const w = isoWeek(d);
+        const idx = buckets.findIndex(b => b.y === y && b.w === w);
+        if (idx >= 0) {
+          buckets[idx].total += (s.correct + s.wrong + s.skipped);
+        }
+      });
+
+      return {
+        labels: buckets.map(b => b.label),
+        values: buckets.map(b => b.total)
+      };
+    }
+
+    function renderGraphs() {
+      if (!currentProfile || !sessions[currentProfile]) return;
+      const list = sessions[currentProfile] || [];
+
+      const daily = groupDailyLast7Days(list);
+      const weekly = groupWeeklyLast8Weeks(list);
+
       if (weeklyChart) weeklyChart.destroy();
       if (monthlyChart) monthlyChart.destroy();
-      if (sessionBreakdownChart) sessionBreakdownChart.destroy();
-
-      // Weekly (last 7 days, per day correct count)
-      const now = Date.now();
-      const days = Array.from({length:7}, (_,i)=> {
-        const d = new Date(now - (6-i)*86400000);
-        return d.toLocaleDateString();
-      });
-      const counts = days.map(day=>{
-        let c=0;
-        list.forEach(s=>{
-          const d = new Date(s.start).toLocaleDateString();
-          if (d===day) c+=s.correct;
-        });
-        return c;
-      });
 
       weeklyChart = new Chart(weeklyCanvas.getContext("2d"), {
-        type:"bar",
-        data: {labels:days, datasets:[{label:"Correct", data:counts, backgroundColor:"#27ae60"}]},
-        options: {scales:{y:{beginAtZero:true}}}
+        type: "bar",
+        data: {
+          labels: daily.labels,
+          datasets: [{
+            label: "Questions per day (last 7 days)",
+            data: daily.values,
+            backgroundColor: "#3498db",
+            borderColor: "#2980b9",
+            borderWidth: 1
+          }]
+        },
+        options: {
+          responsive: true,
+          plugins: { legend: { display: false } },
+          scales: { y: { beginAtZero: true, ticks: { precision:0 } } }
+        }
       });
-
-      // Monthly (last 8 weeks, per week correct count)
-      const weeks = [];
-      const weekCounts = [];
-      for (let i=7;i>=0;i--) {
-        const start = new Date(now - i*7*86400000);
-        const weekStr = `W${getWeekNumber(start)}`;
-        weeks.push(weekStr);
-        let c=0;
-        list.forEach(s=>{
-          const d = new Date(s.start);
-          if (getWeekNumber(d)===getWeekNumber(start)) c+=s.correct;
-        });
-        weekCounts.push(c);
-      }
 
       monthlyChart = new Chart(monthlyCanvas.getContext("2d"), {
-        type:"line",
-        data:{labels:weeks, datasets:[{label:"Correct", data:weekCounts, borderColor:"#3498db"}]},
-        options:{scales:{y:{beginAtZero:true}}}
-      });
-
-      // Per-session breakdown chart (NEW)
-      const labels = list.map((s,i)=>`S${list.length-i}`);
-      const correctData = list.map(s=>s.correct);
-      const wrongData = list.map(s=>s.wrong);
-      const skippedData = list.map(s=>s.skipped);
-
-      sessionBreakdownChart = new Chart(
-        document.getElementById("sessionBreakdownChart").getContext("2d"),
-        {
-          type: "line",
-          data: {
-            labels,
-            datasets: [
-              {label:"Correct", data:correctData, borderColor:"#27ae60", backgroundColor:"rgba(39,174,96,0.1)", tension:0.4},
-              {label:"Wrong", data:wrongData, borderColor:"#e74c3c", backgroundColor:"rgba(231,76,60,0.1)", tension:0.4},
-              {label:"Skipped", data:skippedData, borderColor:"#7f8c8d", backgroundColor:"rgba(127,140,141,0.1)", tension:0.4}
-            ]
-          },
-          options:{
-            responsive:true,
-            plugins:{legend:{display:true}},
-            scales:{y:{beginAtZero:true,ticks:{precision:0}}}
-          }
+        type: "line",
+        data: {
+          labels: weekly.labels,
+          datasets: [{
+            label: "Questions per week (last 8 weeks)",
+            data: weekly.values,
+            borderColor: "#e74c3c",
+            backgroundColor: "rgba(231, 76, 60, 0.1)",
+            tension: 0.4
+          }]
+        },
+        options: {
+          responsive: true,
+          plugins: { legend: { display: false } },
+          scales: { y: { beginAtZero: true, ticks: { precision:0 } } }
         }
-      );
-    }
-
-    function getWeekNumber(d) {
-      d = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
-      const dayNum = d.getUTCDay() || 7;
-      d.setUTCDate(d.getUTCDate() + 4 - dayNum);
-      const yearStart = new Date(Date.UTC(d.getUTCFullYear(),0,1));
-      return Math.ceil((((d - yearStart) / 86400000) + 1)/7);
-    }
-
-    /* ========= Export ========= */
-    exportPdfBtn.onclick = () => {
-      const { jsPDF } = window.jspdf;
-      const doc = new jsPDF();
-      doc.text(`Study Report — ${currentProfile}`, 14, 20);
-
-      const list = sessions[currentProfile] || [];
-      let y = 40;
-      let sumC=0,sumW=0,sumS=0,totalQs=0,totalDur=0;
-
-      list.forEach((s,i)=>{
-        const d = new Date(s.start).toLocaleString();
-        const dur = formatTime(s.duration);
-        const t = s.correct+s.wrong+s.skipped;
-        sumC+=s.correct; sumW+=s.wrong; sumS+=s.skipped; totalQs+=t; totalDur+=s.duration;
-        doc.text(`${i+1}. ${s.exName}`,14,y);
-        y+=7;
-        doc.text(`${d} • Duration ${dur} • Qs ${t}`,20,y); y+=7;
-        doc.text(`Correct ${s.correct} (${percent(s.correct,t)}) | Wrong ${s.wrong} (${percent(s.wrong,t)}) | Skipped ${s.skipped} (${percent(s.skipped,t)})`,20,y);
-        y+=12;
-        if (y>270){ doc.addPage(); y=20;}
       });
+      // --- New per-session breakdown chart ---
+      const sessionCtx = document.getElementById("sessionBreakdownChart").getContext("2d");
+      if (perSessionChart) perSessionChart.destroy();
+      perSessionChart = new Chart(sessionCtx, {
+        type: "line",
+        data: {
+          labels: list.map((s, i) => `S${i + 1}`),
+          datasets: [
+            {
+              label: "Correct",
+              data: list.map(s => s.correct),
+              borderColor: "#27ae60",
+              backgroundColor: "rgba(39, 174, 96, 0.1)",
+              tension: 0.3
+            },
+            {
+              label: "Wrong",
+              data: list.map(s => s.wrong),
+              borderColor: "#e74c3c",
+              backgroundColor: "rgba(231, 76, 60, 0.1)",
+              tension: 0.3
+            },
+            {
+              label: "Skipped",
+              data: list.map(s => s.skipped),
+              borderColor: "#7f8c8d",
+              backgroundColor: "rgba(127, 140, 141, 0.1)",
+              tension: 0.3
+            }
+          ]
+        },
+        options: {
+          responsive: true,
+          plugins: { legend: { position: "top" } },
+          scales: { y: { beginAtZero: true, ticks: { precision:0 } } }
+        }
+      });
+    }
+    }
 
-      if (list.length){
-        doc.text(`Overall: Correct ${sumC} (${percent(sumC,totalQs)}) | Wrong ${sumW} (${percent(sumW,totalQs)}) | Skipped ${sumS} (${percent(sumS,totalQs)})`,14,y+10);
-      }
+    /* ========= Sidebar Actions ========= */
+    darkModeBtn.onclick = () => {
+      document.body.classList.toggle("dark");
+    };
+
+    exportJsonBtn.onclick = () => {
+      if (!currentProfile || !sessions[currentProfile]) return alert("Select a profile first");
+      const payload = {
+        schema: "study-tracker.v1",
+        profile: currentProfile,
+        sessions: sessions[currentProfile] || []
+      };
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${currentProfile}_backup.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+    };
+
+    importJsonBtn.onclick = () => importJsonInput.click();
+    
+    importJsonInput.onchange = e => {
+      const file = e.target.files[0];
+      if (!file) return;
+      if (!db) return alert("Database not connected");
+      
+      const reader = new FileReader();
+      reader.onload = async () => {
+        try {
+          const data = JSON.parse(reader.result);
+          if (!currentProfile) return alert("Select a profile first");
+          const imported = Array.isArray(data) ? data : (data.sessions || []);
+          
+          const batch = db.batch();
+          imported.forEach(session => {
+            // Remove 'id' field as Firestore will generate a new one
+            delete session.id;
+            session.profileName = currentProfile; // ensure it's linked
+            const newDocRef = db.collection("sessions").doc();
+            batch.set(newDocRef, session);
+          });
+          await batch.commit();
+          
+          alert(`Imported ${imported.length} sessions into "${currentProfile}".`);
+          importJsonInput.value = "";
+        } catch (err) {
+          console.error("Error importing data:", err);
+          alert("Invalid JSON file or an error occurred during import.");
+        }
+      };
+      reader.readAsText(file);
+    };
+
+    exportPdfBtn.onclick = () => {
+      if (!currentProfile || !sessions[currentProfile]) return alert("Select a profile first");
+      const list = sessions[currentProfile] || [];
+      const { jsPDF } = window.jspdf;
+      const doc = new jsPDF({ unit: "pt", format: "a4" });
+
+      let y = 40;
+      doc.setFontSize(16);
+      doc.text(`Study Report — ${currentProfile}`, 40, y);
+      y += 16;
+
+      // totals
+      let totalQs = 0, totalDur = 0;
+      let sumC=0,sumW=0,sumS=0;
+      list.forEach(s=>{
+        const t = s.correct + s.wrong + s.skipped;
+        totalQs += t;
+        totalDur += (s.durationMs||0);
+        sumC += s.correct; sumW += s.wrong; sumS += s.skipped;
+      });
+      y += 10;
+      doc.setFontSize(11);
+      doc.text(`Sessions: ${list.length}`, 40, y); y += 14;
+      doc.text(`Total Questions: ${totalQs}`, 40, y); y += 14;
+      doc.text(`Avg Duration: ${list.length ? formatTime(Math.round(totalDur/list.length)) : "00:00:00"}`, 40, y); y += 20;
+      doc.text(`Overall: Correct ${sumC} (${percent(sumC,totalQs)}) | Wrong ${sumW} (${percent(sumW,totalQs)}) | skipped ${sumS} (${percent(sumS,totalQs)})`, 40, y);
+      y += 24;
+
+      // sessions
+      doc.setFontSize(12);
+      list.forEach((s, i) => {
+        const t = s.correct + s.wrong + s.skipped;
+        const line1 = `${i+1}. ${s.name}`;
+        const line2 = `${new Date(s.start).toLocaleString()} • Duration ${formatTime(s.durationMs)} • Qs ${t}`;
+        const line3 = `Correct ${s.correct} (${percent(s.correct,t)}) | Wrong ${s.wrong} (${percent(s.wrong,t)}) | skipped ${s.skipped} (${percent(s.skipped,t)})`;
+
+        if (y > 760) { doc.addPage(); y = 40; }
+        doc.text(line1, 40, y); y += 14;
+        doc.setFontSize(11);
+        doc.text(line2, 40, y); y += 14;
+        doc.text(line3, 40, y); y += 18;
+        doc.setFontSize(12);
+      });
 
       doc.save(`${currentProfile}_report.pdf`);
     };
 
-    /* ========= Event Listeners ========= */
-    createProfileBtn.onclick = async ()=>{
-      const name = newProfileInput.value.trim();
-      if (!name) return;
-      try{
-        await db.collection("profiles").doc(name).set({name});
-        profiles.push(name);
-        renderProfiles();
-        selectProfile(name);
-        newProfileInput.value="";
-      } catch(err){ console.error("Error creating profile:",err);}
+    showStatsBtn.onclick = () => {
+      const willShow = statsPanel.classList.contains("hidden");
+      if (willShow) renderStatsPanel();
+      statsPanel.classList.toggle("hidden");
     };
 
-    profileSelect.onchange = ()=> selectProfile(profileSelect.value);
-    startBtn.onclick = startSession;
-    pauseBtn.onclick = pauseResumeSession;
-    endBtn.onclick = endSession;
-    correctBtn.onclick = ()=>addQuestionResult("correct");
-    wrongBtn.onclick = ()=>addQuestionResult("wrong");
-    skippedBtn.onclick = ()=>addQuestionResult("skipped");
+    showGraphsBtn.onclick = () => {
+      if (!currentProfile) return alert("Select a profile first");
+      renderGraphs();
+      graphModal.style.display = "block";
+      graphModal.setAttribute("aria-hidden", "false");
+    };
 
-    darkModeBtn.onclick = ()=> document.body.classList.toggle("dark");
-    showStatsBtn.onclick = ()=> statsPanel.classList.toggle("hidden");
+    closeGraphModal.onclick = () => {
+      graphModal.style.display = "none";
+      graphModal.setAttribute("aria-hidden", "true");
+    };
 
-    showGraphsBtn.onclick = ()=>{graphModal.style.display="block"; renderGraphs();};
-    closeGraphModal.onclick = ()=>{graphModal.style.display="none";};
+    window.addEventListener("click", (e) => {
+      if (e.target === graphModal) {
+        graphModal.style.display = "none";
+        graphModal.setAttribute("aria-hidden", "true");
+      }
+    });
 
-    window.onclick = e=>{ if(e.target==graphModal) graphModal.style.display="none"; };
+    /* ========= Startup ========= */
+    function boot() {
+      console.log("Starting application...");
+      
+      // Wait for scripts to load completely
+      if (typeof firebase === 'undefined') {
+        console.log("Waiting for Firebase SDK to load...");
+        setTimeout(() => {
+          if (typeof firebase === 'undefined') {
+            console.error("Firebase SDK failed to load after timeout");
+            connectionStatus.textContent = "SDK Failed";
+            connectionStatus.className = "status-indicator status-error";
+            alert("Firebase SDK failed to load. Please check your internet connection and refresh the page.");
+            return;
+          }
+          initializeFirebase();
+        }, 2000);
+        return;
+      }
+      
+      // Initialize Firebase
+      initializeFirebase();
+      
+      // Set initial UI state
+      setStudyControlsEnabled(false);
+    }
 
-    // Initialize
-    initializeFirebase();
+    // Start the app when DOM and all scripts are ready
+    window.addEventListener('load', () => {
+      console.log("Window loaded, starting boot sequence...");
+      boot();
+    });
   </script>
 </body>
 </html>
