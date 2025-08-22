@@ -242,7 +242,16 @@
         <button id="createProfileBtn">Create Profile</button>
       </div>
       <div id="currentProfile" class="muted"></div>
-      <div id="profileXP" class="muted"></div>
+      <div id="profileXP" style="color:red; font-weight:bold;"></div>
+      <div id="todoPanel" class="panel hidden">
+        <h3>To-Do List</h3>
+        <div style="display:flex; gap:8px; margin-bottom:10px;">
+          <input id="todoInput" placeholder="New task..." style="flex:1" />
+          <button id="addTodoBtn">Add</button>
+        </div>
+        <ul id="todoList"></ul>
+      </div>
+
 
 
       <div id="sessionControls">
@@ -279,6 +288,8 @@
       <button id="importJsonBtn">📂 Add Previous Data</button>
       <button id="showStatsBtn">📊 Profile Stats</button>
       <button id="showGraphsBtn">📈 Graphs</button>
+      <button id="showTodoBtn">📝 To-Do</button>
+
     </aside>
   </div>
 
@@ -503,7 +514,7 @@
       
       currentProfile = name;
       currentProfileView.textContent = `Profile: ${name}`;
-
+      loadTodos(name);
       // Use a real-time listener for sessions
       try {
         db.collection("sessions")
@@ -738,6 +749,82 @@
   `;
 }
 
+const showTodoBtn = document.getElementById("showTodoBtn");
+const todoPanel = document.getElementById("todoPanel");
+const todoInput = document.getElementById("todoInput");
+const addTodoBtn = document.getElementById("addTodoBtn");
+const todoList = document.getElementById("todoList");
+
+let todosUnsub = null; // Firestore listener
+
+function loadTodos(profile) {
+  if (!db) return;
+  if (todosUnsub) todosUnsub(); // stop old listener
+
+  todosUnsub = db.collection("profiles").doc(profile).collection("todos")
+    .orderBy("created", "desc")
+    .onSnapshot(snapshot => {
+      const items = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      renderTodos(items);
+    });
+}
+
+function renderTodos(items) {
+  todoList.innerHTML = "";
+  if (items.length === 0) {
+    todoList.innerHTML = `<li class="muted">No tasks yet.</li>`;
+    return;
+  }
+
+  items.forEach(task => {
+    const li = document.createElement("li");
+    li.style.display = "flex";
+    li.style.justifyContent = "space-between";
+    li.style.alignItems = "center";
+    li.style.padding = "6px 0";
+
+    const span = document.createElement("span");
+    span.textContent = task.text;
+    if (task.done) span.style.textDecoration = "line-through";
+    span.style.cursor = "pointer";
+    span.onclick = () => toggleTodo(task.id, !task.done);
+
+    const del = document.createElement("button");
+    del.textContent = "✖";
+    del.className = "danger";
+    del.style.padding = "4px 8px";
+    del.onclick = () => deleteTodo(task.id);
+
+    li.appendChild(span);
+    li.appendChild(del);
+    todoList.appendChild(li);
+  });
+}
+
+async function addTodo() {
+  const text = todoInput.value.trim();
+  if (!text || !currentProfile) return;
+  await db.collection("profiles").doc(currentProfile).collection("todos").add({
+    text, done: false, created: Date.now()
+  });
+  todoInput.value = "";
+}
+
+function toggleTodo(id, done) {
+  if (!currentProfile) return;
+  db.collection("profiles").doc(currentProfile).collection("todos").doc(id).update({ done });
+}
+
+function deleteTodo(id) {
+  if (!currentProfile) return;
+  db.collection("profiles").doc(currentProfile).collection("todos").doc(id).delete();
+}
+
+showTodoBtn.onclick = () => {
+  todoPanel.classList.toggle("hidden");
+};
+
+addTodoBtn.onclick = addTodo;
 
     /* ========= Graphs (Chart.js) ========= */
     function groupDailyLast7Days(list) {
