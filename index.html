@@ -242,6 +242,8 @@
         <button id="createProfileBtn">Create Profile</button>
       </div>
       <div id="currentProfile" class="muted"></div>
+      <div id="profileXP" class="muted"></div>
+
 
       <div id="sessionControls">
         <input id="exName" placeholder="Session Name (e.g., Arrays, Sorting...)" />
@@ -696,39 +698,46 @@
 
     /* ========= Stats ========= */
     function renderStatsPanel() {
-      if (!currentProfile || !sessions[currentProfile]) {
-        statsContent.innerHTML = "";
-        return;
-      }
-      const list = sessions[currentProfile] || [];
-      const totalSessions = list.length;
-      let totalQs = 0;
-      let totalDur = 0;
-      let sumCorrect = 0, sumWrong = 0, sumSkipped = 0;
+  if (!currentProfile || !sessions[currentProfile]) {
+    statsContent.innerHTML = "";
+    return;
+  }
+  const list = sessions[currentProfile] || [];
+  const totalSessions = list.length;
+  let totalQs = 0;
+  let totalDur = 0;
+  let sumCorrect = 0, sumWrong = 0, sumSkipped = 0;
+  let xpTotal = 0; // moved here
 
-      list.forEach(s => {
-        const t = s.correct + s.wrong + s.skipped;
-        totalQs += t;
-        totalDur += (s.durationMs || 0);
-        sumCorrect += s.correct;
-        sumWrong += s.wrong;
-        sumSkipped += s.skipped;
-      });
+  list.forEach(s => {
+    const t = s.correct + s.wrong + s.skipped;
+    totalQs += t;
+    totalDur += (s.durationMs || 0);
+    sumCorrect += s.correct;
+    sumWrong += s.wrong;
+    sumSkipped += s.skipped;
 
-      const avgDur = totalSessions ? formatTime(Math.round(totalDur / totalSessions)) : "00:00:00";
+    xpTotal += (s.correct * 4) + (s.wrong * -1); // merged into same loop
+  });
 
-      statsContent.innerHTML = `
-        <div><strong>Profile:</strong> ${currentProfile}</div>
-        <div><strong>Sessions:</strong> ${totalSessions}</div>
-        <div><strong>Total Questions:</strong> ${totalQs}</div>
-        <div><strong>Average Duration:</strong> ${avgDur}</div>
-        <div style="margin-top:6px;"><strong>Overall Breakdown:</strong>
-          ✔ ${sumCorrect} (${percent(sumCorrect, totalQs)}) &nbsp;|&nbsp;
-          ❌ ${sumWrong} (${percent(sumWrong, totalQs)}) &nbsp;|&nbsp;
-          ⏭ ${sumSkipped} (${percent(sumSkipped, totalQs)})
-        </div>
-      `;
-    }
+  // update XP display
+  document.getElementById("profileXP").textContent = `XP: ${xpTotal}`;
+
+  const avgDur = totalSessions ? formatTime(Math.round(totalDur / totalSessions)) : "00:00:00";
+
+  statsContent.innerHTML = `
+    <div><strong>Profile:</strong> ${currentProfile}</div>
+    <div><strong>Sessions:</strong> ${totalSessions}</div>
+    <div><strong>Total Questions:</strong> ${totalQs}</div>
+    <div><strong>Average Duration:</strong> ${avgDur}</div>
+    <div style="margin-top:6px;"><strong>Overall Breakdown:</strong>
+      ✔ ${sumCorrect} (${percent(sumCorrect, totalQs)}) &nbsp;|&nbsp;
+      ❌ ${sumWrong} (${percent(sumWrong, totalQs)}) &nbsp;|&nbsp;
+      ⏭ ${sumSkipped} (${percent(sumSkipped, totalQs)})
+    </div>
+  `;
+}
+
 
     /* ========= Graphs (Chart.js) ========= */
     function groupDailyLast7Days(list) {
