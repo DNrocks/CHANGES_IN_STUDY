@@ -251,8 +251,20 @@
         </div>
         <ul id="todoList"></ul>
       </div>
+      <!-- JEE Mains Panel -->
+      <div id="jeePanel" class="panel hidden">
+        <h3>JEE Mains Improvement Tracker</h3>
+  
+        <div style="margin-bottom:12px;">
+          <input type="number" id="marksPhysics" placeholder="Physics" min="0" max="100" />
+          <input type="number" id="marksChemistry" placeholder="Chemistry" min="0" max="100" />
+          <input type="number" id="marksMaths" placeholder="Maths" min="0" max="100" />
+          <button id="addJeeMarksBtn">Add Attempt</button>
+        </div>
 
-
+        <canvas id="jeeChart" height="180"></canvas>
+      </div>
+      
 
       <div id="sessionControls">
         <input id="exName" placeholder="Session Name (e.g., Arrays, Sorting...)" />
@@ -289,6 +301,8 @@
       <button id="showStatsBtn">📊 Profile Stats</button>
       <button id="showGraphsBtn">📈 Graphs</button>
       <button id="showTodoBtn">📝 To-Do</button>
+      <button id="showJeeBtn">📈 JEE Mains Improvement</button>
+
 
     </aside>
   </div>
@@ -515,6 +529,8 @@
       currentProfile = name;
       currentProfileView.textContent = `Profile: ${name}`;
       loadTodos(name);
+      loadJeeMarks(name);
+
       // Use a real-time listener for sessions
       try {
         db.collection("sessions")
@@ -825,6 +841,82 @@ showTodoBtn.onclick = () => {
 };
 
 addTodoBtn.onclick = addTodo;
+
+// ====== JEE Mains Improvement Tracker ======
+const showJeeBtn = document.getElementById("showJeeBtn");
+const jeePanel = document.getElementById("jeePanel");
+const addJeeMarksBtn = document.getElementById("addJeeMarksBtn");
+
+let jeeChart = null;
+let jeeUnsub = null;
+
+function loadJeeMarks(profile) {
+  if (!db) return;
+  if (jeeUnsub) jeeUnsub(); // stop old listener
+
+  jeeUnsub = db.collection("profiles").doc(profile).collection("jeeMarks")
+    .orderBy("date", "asc")
+    .onSnapshot(snapshot => {
+      const attempts = snapshot.docs.map(doc => doc.data());
+      renderJeeChart(attempts);
+    });
+}
+
+function renderJeeChart(attempts) {
+  const labels = attempts.map(a => new Date(a.date).toLocaleDateString());
+  const physics = attempts.map(a => a.physics);
+  const chemistry = attempts.map(a => a.chemistry);
+  const maths = attempts.map(a => a.maths);
+  const total = attempts.map(a => a.total);
+
+  const ctx = document.getElementById("jeeChart").getContext("2d");
+
+  if (jeeChart) jeeChart.destroy();
+
+  jeeChart = new Chart(ctx, {
+    type: "line",
+    data: {
+      labels,
+      datasets: [
+        { label: "Total", data: total, borderColor: "green", fill: false },
+        { label: "Physics", data: physics, borderColor: "blue", fill: false },
+        { label: "Chemistry", data: chemistry, borderColor: "orange", fill: false },
+        { label: "Maths", data: maths, borderColor: "brown", fill: false }
+      ]
+    },
+    options: {
+      responsive: true,
+      scales: {
+        y: { suggestedMin: 0, suggestedMax: 300, title: { display: true, text: "Marks" } },
+        x: { title: { display: true, text: "Attempts" } }
+      }
+    }
+  });
+}
+
+addJeeMarksBtn.onclick = async () => {
+  if (!currentProfile) return;
+  const phy = parseInt(document.getElementById("marksPhysics").value) || 0;
+  const chem = parseInt(document.getElementById("marksChemistry").value) || 0;
+  const math = parseInt(document.getElementById("marksMaths").value) || 0;
+  const total = phy + chem + math;
+
+  await db.collection("profiles").doc(currentProfile).collection("jeeMarks").add({
+    physics: phy,
+    chemistry: chem,
+    maths: math,
+    total,
+    date: Date.now()
+  });
+
+  document.getElementById("marksPhysics").value = "";
+  document.getElementById("marksChemistry").value = "";
+  document.getElementById("marksMaths").value = "";
+};
+
+showJeeBtn.onclick = () => {
+  jeePanel.classList.toggle("hidden");
+};
 
     /* ========= Graphs (Chart.js) ========= */
     function groupDailyLast7Days(list) {
