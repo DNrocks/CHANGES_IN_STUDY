@@ -251,19 +251,7 @@
         </div>
         <ul id="todoList"></ul>
       </div>
-      <!-- JEE Mains Panel -->
-      <div id="jeePanel" class="panel hidden">
-        <h3>JEE Mains Improvement Tracker</h3>
-  
-        <div style="margin-bottom:12px;">
-          <input type="number" id="marksPhysics" placeholder="Physics" min="0" max="100" />
-          <input type="number" id="marksChemistry" placeholder="Chemistry" min="0" max="100" />
-          <input type="number" id="marksMaths" placeholder="Maths" min="0" max="100" />
-          <button id="addJeeMarksBtn">Add Attempt</button>
-        </div>
-
-        <canvas id="jeeChart" height="180"></canvas>
-      </div>
+      
       
 
       <div id="sessionControls">
@@ -303,6 +291,8 @@
       <button id="showTodoBtn">📝 To-Do</button>
       <button id="showJeeBtn">📈 JEE Mains Improvement</button>
 
+      
+
 
     </aside>
   </div>
@@ -319,6 +309,25 @@
 
     </div>
   </div>
+  <div id="jeeModal" class="modal" aria-hidden="true">
+    <div class="modal-content">
+      <span class="close" id="closeJeeModal" role="button" aria-label="Close JEE Graph">&times;</span>
+      <h3>JEE Mains Improvement Tracker</h3>
+    
+      <div style="margin-bottom:12px;">
+        <input type="number" id="marksPhysics" placeholder="Physics" min="0" max="100" />
+        <input type="number" id="marksChemistry" placeholder="Chemistry" min="0" max="100" />
+        <input type="number" id="marksMaths" placeholder="Maths" min="0" max="100" />
+        <button id="addJeeMarksBtn">Add Attempt</button>
+      </div>
+
+      <canvas id="jeeChart" height="200"></canvas>
+
+      <h4 style="margin-top:20px;">Attempts</h4>
+      <ul id="jeeAttemptsList" style="max-height:150px; overflow-y:auto; padding-left:0; list-style:none;"></ul>
+    </div>
+  </div>
+
 
   <script>
     /* ========= Firebase Configuration & Initialization ========= */
@@ -530,6 +539,8 @@
       currentProfileView.textContent = `Profile: ${name}`;
       loadTodos(name);
       loadJeeMarks(name);
+
+      
 
       // Use a real-time listener for sessions
       try {
@@ -844,8 +855,10 @@ addTodoBtn.onclick = addTodo;
 
 // ====== JEE Mains Improvement Tracker ======
 const showJeeBtn = document.getElementById("showJeeBtn");
-const jeePanel = document.getElementById("jeePanel");
+const jeeModal = document.getElementById("jeeModal");
+const closeJeeModal = document.getElementById("closeJeeModal");
 const addJeeMarksBtn = document.getElementById("addJeeMarksBtn");
+const jeeAttemptsList = document.getElementById("jeeAttemptsList");
 
 let jeeChart = null;
 let jeeUnsub = null;
@@ -857,20 +870,24 @@ function loadJeeMarks(profile) {
   jeeUnsub = db.collection("profiles").doc(profile).collection("jeeMarks")
     .orderBy("date", "asc")
     .onSnapshot(snapshot => {
-      const attempts = snapshot.docs.map(doc => doc.data());
+      const attempts = snapshot.docs.map((doc, i) => ({
+        id: doc.id,
+        index: i + 1,
+        ...doc.data()
+      }));
       renderJeeChart(attempts);
+      renderJeeAttempts(attempts);
     });
 }
 
 function renderJeeChart(attempts) {
-  const labels = attempts.map(a => new Date(a.date).toLocaleDateString());
+  const labels = attempts.map((a, i) => "S" + (i + 1));
   const physics = attempts.map(a => a.physics);
   const chemistry = attempts.map(a => a.chemistry);
   const maths = attempts.map(a => a.maths);
   const total = attempts.map(a => a.total);
 
   const ctx = document.getElementById("jeeChart").getContext("2d");
-
   if (jeeChart) jeeChart.destroy();
 
   jeeChart = new Chart(ctx, {
@@ -878,20 +895,69 @@ function renderJeeChart(attempts) {
     data: {
       labels,
       datasets: [
-        { label: "Total", data: total, borderColor: "green", fill: false },
-        { label: "Physics", data: physics, borderColor: "blue", fill: false },
-        { label: "Chemistry", data: chemistry, borderColor: "orange", fill: false },
-        { label: "Maths", data: maths, borderColor: "brown", fill: false }
+        { label: "Total", data: total, borderColor: "green", tension: 0.2 },
+        { label: "Physics", data: physics, borderColor: "blue", tension: 0.2 },
+        { label: "Chemistry", data: chemistry, borderColor: "orange", tension: 0.2 },
+        { label: "Maths", data: maths, borderColor: "brown", tension: 0.2 }
       ]
     },
     options: {
       responsive: true,
+      maintainAspectRatio: false,
       scales: {
-        y: { suggestedMin: 0, suggestedMax: 300, title: { display: true, text: "Marks" } },
-        x: { title: { display: true, text: "Attempts" } }
-      }
+        x: {
+          ticks: {
+            autoSkip: false,
+            maxRotation: 0,
+            minRotation: 0
+          },
+          title: { display: true, text: "Attempts" }
+        },
+        y: {
+          suggestedMin: 0,
+          suggestedMax: 300,
+          title: { display: true, text: "Marks" }
+        }
+      },
+      plugins: { legend: { position: "top" } }
     }
   });
+}
+
+function renderJeeAttempts(attempts) {
+  jeeAttemptsList.innerHTML = "";
+  if (attempts.length === 0) {
+    jeeAttemptsList.innerHTML = `<li class="muted">No attempts yet.</li>`;
+    return;
+  }
+
+  attempts.forEach(a => {
+    const li = document.createElement("li");
+    li.style.display = "flex";
+    li.style.justifyContent = "space-between";
+    li.style.alignItems = "center";
+    li.style.padding = "4px 0";
+    li.style.borderBottom = "1px solid #ddd";
+
+    const span = document.createElement("span");
+    span.textContent = `S${a.index}: Phy ${a.physics}, Chem ${a.chemistry}, Math ${a.maths}, Total ${a.total}`;
+    span.className = "muted";
+
+    const del = document.createElement("button");
+    del.textContent = "✖";
+    del.className = "danger";
+    del.style.padding = "2px 6px";
+    del.onclick = () => deleteJeeAttempt(a.id);
+
+    li.appendChild(span);
+    li.appendChild(del);
+    jeeAttemptsList.appendChild(li);
+  });
+}
+
+async function deleteJeeAttempt(id) {
+  if (!currentProfile) return;
+  await db.collection("profiles").doc(currentProfile).collection("jeeMarks").doc(id).delete();
 }
 
 addJeeMarksBtn.onclick = async () => {
@@ -915,8 +981,16 @@ addJeeMarksBtn.onclick = async () => {
 };
 
 showJeeBtn.onclick = () => {
-  jeePanel.classList.toggle("hidden");
+  jeeModal.style.display = "block";
+  jeeModal.setAttribute("aria-hidden", "false");
 };
+
+closeJeeModal.onclick = () => {
+  jeeModal.style.display = "none";
+  jeeModal.setAttribute("aria-hidden", "true");
+};
+
+
 
     /* ========= Graphs (Chart.js) ========= */
     function groupDailyLast7Days(list) {
